@@ -37,8 +37,8 @@ jobs:
         working-directory: app
         shell: bash
         run: |
-          npm install --no-audit --no-fund
-          npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest --no-audit --no-fund
+          npm install --legacy-peer-deps --no-audit --no-fund
+          npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest --legacy-peer-deps --no-audit --no-fund
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -88,8 +88,8 @@ jobs:
         shell: pwsh
         run: |
           npm install --no-audit --no-fund
-          npm install --save-dev electron electron-builder --no-audit --no-fund
-          npm install --save express --no-audit --no-fund
+          npm install --save-dev electron electron-builder --legacy-peer-deps --no-audit --no-fund
+          npm install --save express --legacy-peer-deps --no-audit --no-fund
           @'
           const { app, BrowserWindow, dialog } = require('electron');
           const { fork } = require('node:child_process');
