@@ -1,0 +1,130 @@
+name: GoldDesk Desktop and Android Builds
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'golddesk-gold-appraiser-nov-10-2026-8-35-03-am.zip'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Extract source archive
+        shell: bash
+        run: |
+          mkdir app
+          unzip -q golddesk-gold-appraiser-nov-10-2026-8-35-03-am.zip -d app
+          cd app
+          test -f package.json
+      - name: Install dependencies and configure Capacitor
+        working-directory: app
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest --no-audit --no-fund
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.scripts = { ...p.scripts, build: 'vite build' };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2));
+          fs.writeFileSync('capacitor.config.json', JSON.stringify({
+            appId: 'com.black2715.golddesk',
+            appName: 'GoldDesk',
+            webDir: 'dist',
+            bundledWebRuntime: false,
+            server: { androidScheme: 'https' }
+          }, null, 2));
+          NODE
+          npx cap add android
+      - name: Build web assets and sync Android project
+        working-directory: app
+        run: |
+          npm run build
+          npx cap sync android
+      - name: Build debug APK
+        working-directory: app/android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoldDesk-Android-APK
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    name: Windows EXE Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extract source archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force app | Out-Null
+          Expand-Archive -LiteralPath golddesk-gold-appraiser-nov-10-2026-8-35-03-am.zip -DestinationPath app -Force
+          if (!(Test-Path app/package.json)) { throw 'package.json missing from source archive' }
+      - name: Install dependencies and configure Electron
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund
+          npm install --save-dev electron electron-builder --no-audit --no-fund
+          npm install --save express --no-audit --no-fund
+          @'
+          const { app, BrowserWindow, dialog } = require('electron');
+          const { fork } = require('node:child_process');
+          const path = require('node:path');
+          let backend;
+          async function createWindow() {
+            backend = fork(path.join(__dirname, 'server.cjs'), [], {
+              execPath: process.execPath,
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_ENV: 'production', PORT: '3187' },
+              stdio: 'inherit'
+            });
+            const win = new BrowserWindow({ width: 1440, height: 920, minWidth: 980, minHeight: 680, autoHideMenuBar: true, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+            let ready = false;
+            for (let i = 0; i < 40; i++) {
+              try { const r = await fetch('http://127.0.0.1:3187'); if (r.ok) { ready = true; break; } } catch {}
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            if (!ready) { dialog.showErrorBox('GoldDesk could not start', 'The local GoldDesk service did not become ready.'); app.quit(); return; }
+            await win.loadURL('http://127.0.0.1:3187');
+          }
+          app.whenReady().then(createWindow);
+          app.on('before-quit', () => { if (backend) backend.kill(); });
+          app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+          '@ | Set-Content -Encoding utf8 electron-main.cjs
+          node -e "const fs=require('fs');const p=require('./package.json');p.main='electron-main.cjs';p.scripts={...p.scripts,build:'vite build',build: 'vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=server.cjs'};p.build={appId:'com.black2715.golddesk',productName:'GoldDesk',directories:{output:'release'},files:['dist/**/*','server.cjs','electron-main.cjs','package.json','node_modules/**/*'],win:{target:[{target:'nsis',arch:['x64']}]},nsis:{oneClick:false,perMachine:false,allowToChangeInstallationDirectory:true}};fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          npx electron-builder install-app-deps
+      - name: Build Windows installer
+        working-directory: app
+        run: |
+          npm run build
+          npx electron-builder --win nsis --x64
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoldDesk-Windows-EXE
+          path: app/release/*.exe
+          if-no-files-found: error
+          retention-days: 30
